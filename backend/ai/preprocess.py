@@ -54,66 +54,28 @@ def split_paragraphs(text):
 def extract_keyword_candidates(doc, limit=12):
     candidates = []
 
-    # Named entities
-    for entity in doc.ents:
-        candidate = entity.text.strip()
-
-        if candidate:
-            candidates.append(candidate)
-
-    # Noun chunks
-    try:
-        for chunk in doc.noun_chunks:
-            candidate = chunk.text.strip()
-
-            if candidate and len(candidate.split()) <= 5:
-                candidates.append(candidate)
-
-    except Exception:
-        pass
-
-    # Important nouns
     for token in doc:
+        word = token.text.strip()
 
-        if token.is_stop:
+        if len(word) < 3:
             continue
 
-        if token.is_punct:
+        if not word.replace("-", "").isalnum():
             continue
 
-        if token.is_space:
-            continue
-
-        if token.pos_ in {"NOUN", "PROPN"}:
-
-            if len(token.text) > 2:
-
-                lemma = token.lemma_.strip()
-
-                if lemma:
-                    candidates.append(lemma)
+        candidates.append(word)
 
     filtered = []
     seen = set()
 
     for candidate in candidates:
-
-        normalized = re.sub(
-            r"\s+",
-            " ",
-            candidate
-        ).strip(" .,:;!?\"'()[]{}")
-
-        key = normalized.lower()
-
-        if not normalized:
-            continue
+        key = candidate.lower()
 
         if key in seen:
             continue
 
         seen.add(key)
-        filtered.append(normalized)
+        filtered.append(candidate)
 
         if len(filtered) >= limit:
             break
