@@ -41,54 +41,27 @@ def generate_from_paragraph(nlp, paragraph, max_cards=4):
         if sentence.text.strip()
     ]
 
-    keywords = extract_keyword_candidates(
-        doc,
-        limit=max_cards * 2
-    )
-
-    if not keywords:
-        frequency_map = build_frequency_map(doc)
-        keywords = [
-            item[0]
-            for item in frequency_map.most_common(max_cards)
-        ]
-
     flashcards = []
-    seen_questions = set()
 
-    for keyword in keywords:
-        context_sentence = pick_context_sentence(
-            sentences,
-            keyword
-        )
+    for sentence in sentences:
 
-        if not context_sentence:
-            continue
+        if " is " in sentence:
+            subject = sentence.split(" is ")[0].strip()
 
-        flashcard = build_flashcard(
-            keyword,
-            context_sentence
-        )
+            flashcards.append({
+                "question": f"What is {subject}?",
+                "answer": sentence,
+                "status": "Not Known"
+            })
 
-        normalized_question = (
-            flashcard["question"].lower()
-        )
+        elif " are " in sentence:
+            subject = sentence.split(" are ")[0].strip()
 
-        if normalized_question in seen_questions:
-            continue
-
-        seen_questions.add(normalized_question)
-        flashcards.append(flashcard)
-
-        if len(flashcards) >= max_cards:
-            break
-
-    if not flashcards and sentences:
-        flashcards.append({
-            "question": "What is the main idea of this paragraph?",
-            "answer": sentences[0][:280],
-            "status": "Not Known",
-        })
+            flashcards.append({
+                "question": f"What are {subject}?",
+                "answer": sentence,
+                "status": "Not Known"
+            })
 
     return flashcards
 
