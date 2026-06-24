@@ -6,6 +6,28 @@ from collections import Counter
 import spacy
 
 
+# Words that should NOT become flashcards
+STOP_WORDS = {
+    "programming",
+    "language",
+    "allows",
+    "allow",
+    "protects",
+    "protect",
+    "from",
+    "one",
+    "details",
+    "detail",
+    "method",
+    "data",
+    "using",
+    "used",
+    "system",
+    "process",
+    "type"
+}
+
+
 # Load spaCy model
 def load_nlp_pipeline():
     try:
@@ -50,20 +72,36 @@ def split_paragraphs(text):
     ]
 
 
-# Extract keywords
+# Extract meaningful keywords
 def extract_keyword_candidates(doc, limit=12):
     candidates = []
 
     for token in doc:
-        word = token.text.strip()
 
-        if len(word) < 3:
+        if token.is_stop:
             continue
 
-        if not word.replace("-", "").isalnum():
+        if token.is_punct:
             continue
 
-        candidates.append(word)
+        if token.is_space:
+            continue
+
+        if token.pos_ not in {"NOUN", "PROPN"}:
+            continue
+
+        if len(token.text) < 3:
+            continue
+
+        lemma = token.lemma_.strip()
+
+        if not lemma:
+            continue
+
+        if lemma.lower() in STOP_WORDS:
+            continue
+
+        candidates.append(lemma)
 
     filtered = []
     seen = set()
@@ -119,7 +157,10 @@ def build_frequency_map(doc):
 
             lemma = token.lemma_.lower()
 
-            if len(lemma) > 2:
+            if (
+                len(lemma) > 2
+                and lemma not in STOP_WORDS
+            ):
                 counts[lemma] += 1
 
     return counts
