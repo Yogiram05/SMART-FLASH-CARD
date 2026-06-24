@@ -2,7 +2,7 @@
 import json
 import sys
 
-from preprocess import (
+from backend.ai.preprocess import (
     build_frequency_map,
     clean_text,
     extract_keyword_candidates,
