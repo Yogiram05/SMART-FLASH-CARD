@@ -1,114 +1,84 @@
-const { GoogleGenAI } = require("@google/genai");
+const path = require("path");
+const { spawn } = require("child_process");
 const Flashcard = require("../models/Flashcard");
 
-const ai = new GoogleGenAI({
-    apiKey: process.env.GEMINI_API_KEY
-});
+// Run the Python generator and return its JSON output.
+const runPythonGenerator = (notes) => {
+    return new Promise((resolve, reject) => {
+        const pythonExecutable = process.env.PYTHON_BIN || "python";
+        const scriptPath = path.join(__dirname, "..", "..", "ai", "flashcard_generator.py");
+        const pythonProcess = spawn(pythonExecutable, [scriptPath], {
+            env: {
+                ...process.env,
+                PYTHONIOENCODING: "utf-8"
+            }
+        });
 
-// Generate flashcards using Gemini AI
+        let stdout = "";
+        let stderr = "";
+
+        pythonProcess.stdout.on("data", (data) => {
+            stdout += data.toString();
+        });
+
+        pythonProcess.stderr.on("data", (data) => {
+            stderr += data.toString();
+        });
+
+        pythonProcess.on("error", (error) => {
+            reject(new Error(`Failed to start Python process: ${error.message}`));
+        });
+
+        pythonProcess.on("close", (code) => {
+            if (code !== 0) {
+                return reject(new Error(stderr || "Python generator exited with an error."));
+            }
+
+            try {
+                const parsed = JSON.parse(stdout || "{}");
+                return resolve(parsed);
+            } catch (error) {
+                return reject(new Error(`Invalid JSON from Python generator: ${error.message}`));
+            }
+        });
+
+        pythonProcess.stdin.write(JSON.stringify({ notes }));
+        pythonProcess.stdin.end();
+    });
+};
+
+// Generate flashcards from raw notes through the Python NLP module.
 const generateFlashcards = async (req, res) => {
     try {
         const { notes } = req.body;
 
         if (!notes || !notes.trim()) {
-            return res.status(400).json({
-                message: "Notes are required."
-            });
+            return res.status(400).json({ message: "Notes are required to generate flashcards." });
         }
 
-        console.log(
-            "API KEY =",
-            process.env.GEMINI_API_KEY ? "FOUND" : "NOT FOUND"
-        );
-
-        const prompt = `
-Generate study flashcards from the notes below.
-
-Return ONLY valid JSON.
-
-Format:
-
-[
-  {
-    "question":"...",
-    "answer":"...",
-    "status":"Not Known"
-  }
-]
-
-Rules:
-- Create meaningful study questions.
-- Answers should be short and accurate.
-- Generate between 5 and 10 flashcards.
-- Return only JSON.
-- Do not use markdown.
-
-Notes:
-${notes}
-`;
-
-        let response;
-
-        try {
-            response = await ai.models.generateContent({
-                model: "gemini-2.0-flash",
-                contents: prompt
-            });
-        } catch (geminiError) {
-            console.error("Gemini Error:", geminiError);
-
-            return res.status(500).json({
-                message: "Gemini AI is busy. Please try again later."
-            });
-        }
-
-        let text = response.text || "";
-
-        text = text.replace(/```json/g, "");
-        text = text.replace(/```/g, "");
-        text = text.trim();
-
-        let flashcards;
-
-        try {
-            flashcards = JSON.parse(text);
-        } catch (parseError) {
-            console.error("JSON Parse Error:", parseError);
-            console.log("Gemini Output:", text);
-
-            return res.status(500).json({
-                message: "Invalid response received from Gemini."
-            });
-        }
+        const result = await runPythonGenerator(notes);
 
         return res.status(200).json({
             message: "Flashcards generated successfully.",
-            flashcards
+            flashcards: result.flashcards || []
         });
-
     } catch (error) {
-        console.error(error);
-
-        return res.status(500).json({
-            message: error.message
-        });
+        return res.status(500).json({ message: error.message });
     }
 };
 
-// Save flashcards
+// Save a batch of generated flashcards for the current user.
 const saveFlashcards = async (req, res) => {
     try {
         const { flashcards } = req.body;
 
         if (!Array.isArray(flashcards) || flashcards.length === 0) {
-            return res.status(400).json({
-                message: "Flashcards array is required."
-            });
+            return res.status(400).json({ message: "Flashcards array is required." });
         }
 
         const documents = flashcards
-            .filter(card => card && card.question && card.answer)
-            .map(card => ({
+            .filter((card) => card && card.question && card.answer)
+            .map((card) => ({
                 userId: req.user._id,
                 question: card.question.trim(),
                 answer: card.answer.trim(),
@@ -116,9 +86,7 @@ const saveFlashcards = async (req, res) => {
             }));
 
         if (documents.length === 0) {
-            return res.status(400).json({
-                message: "No valid flashcards were provided."
-            });
+            return res.status(400).json({ message: "No valid flashcards were provided." });
         }
 
         const savedFlashcards = await Flashcard.insertMany(documents);
@@ -127,48 +95,35 @@ const saveFlashcards = async (req, res) => {
             message: "Flashcards saved successfully.",
             flashcards: savedFlashcards
         });
-
     } catch (error) {
-        return res.status(500).json({
-            message: error.message
-        });
+        return res.status(500).json({ message: error.message });
     }
 };
 
-// Get flashcards
+// Fetch all flashcards belonging to the authenticated user.
 const getFlashcards = async (req, res) => {
     try {
-        const flashcards = await Flashcard
-            .find({ userId: req.user._id })
-            .sort({ createdAt: -1 });
+        const flashcards = await Flashcard.find({ userId: req.user._id }).sort({ createdAt: -1 });
 
         return res.status(200).json({
             count: flashcards.length,
             flashcards
         });
-
     } catch (error) {
-        return res.status(500).json({
-            message: error.message
-        });
+        return res.status(500).json({ message: error.message });
     }
 };
 
-// Update flashcard
+// Update a flashcard that belongs to the authenticated user.
 const updateFlashcard = async (req, res) => {
     try {
         const { id } = req.params;
         const { question, answer, status } = req.body;
 
-        const flashcard = await Flashcard.findOne({
-            _id: id,
-            userId: req.user._id
-        });
+        const flashcard = await Flashcard.findOne({ _id: id, userId: req.user._id });
 
         if (!flashcard) {
-            return res.status(404).json({
-                message: "Flashcard not found."
-            });
+            return res.status(404).json({ message: "Flashcard not found." });
         }
 
         if (question !== undefined) {
@@ -189,38 +144,25 @@ const updateFlashcard = async (req, res) => {
             message: "Flashcard updated successfully.",
             flashcard: updatedFlashcard
         });
-
     } catch (error) {
-        return res.status(500).json({
-            message: error.message
-        });
+        return res.status(500).json({ message: error.message });
     }
 };
 
-// Delete flashcard
+// Delete a flashcard that belongs to the authenticated user.
 const deleteFlashcard = async (req, res) => {
     try {
         const { id } = req.params;
 
-        const flashcard = await Flashcard.findOneAndDelete({
-            _id: id,
-            userId: req.user._id
-        });
+        const flashcard = await Flashcard.findOneAndDelete({ _id: id, userId: req.user._id });
 
         if (!flashcard) {
-            return res.status(404).json({
-                message: "Flashcard not found."
-            });
+            return res.status(404).json({ message: "Flashcard not found." });
         }
 
-        return res.status(200).json({
-            message: "Flashcard deleted successfully."
-        });
-
+        return res.status(200).json({ message: "Flashcard deleted successfully." });
     } catch (error) {
-        return res.status(500).json({
-            message: error.message
-        });
+        return res.status(500).json({ message: error.message });
     }
 };
 
