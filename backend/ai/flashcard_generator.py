@@ -1,38 +1,22 @@
-# Command-line Python entry point that converts notes into flashcard JSON.
 import json
 import sys
 
 from preprocess import (
-    build_frequency_map,
     clean_text,
-    extract_keyword_candidates,
     load_nlp_pipeline,
-    pick_context_sentence,
     split_paragraphs,
 )
 
 
-# Create a question from a keyword and its supporting sentence.
-def build_flashcard(keyword, context_sentence):
-    short_answer = context_sentence.strip()
-
-    if len(short_answer) > 280:
-        short_answer = short_answer[:277].rsplit(" ", 1)[0] + "..."
-
-    question = f"What is {keyword}?"
-
-    if keyword.lower().startswith(("a ", "an ", "the ")):
-        question = f"Explain {keyword}."
-
+def build_flashcard(question, answer):
     return {
         "question": question,
-        "answer": short_answer,
+        "answer": answer,
         "status": "Not Known",
     }
 
 
-# Turn a single paragraph into one or more flashcards.
-def generate_from_paragraph(nlp, paragraph, max_cards=4):
+def generate_from_paragraph(nlp, paragraph, max_cards=10):
     doc = nlp(paragraph)
 
     sentences = [
@@ -45,28 +29,28 @@ def generate_from_paragraph(nlp, paragraph, max_cards=4):
 
     for sentence in sentences:
 
-        if " is " in sentence:
-            subject = sentence.split(" is ")[0].strip()
+        sentence = sentence.strip().rstrip(".")
 
-            flashcards.append({
-                "question": f"What is {subject}?",
-                "answer": sentence,
-                "status": "Not Known"
-            })
+        words = sentence.split()
 
-        elif " are " in sentence:
-            subject = sentence.split(" are ")[0].strip()
+        if len(words) < 3:
+            continue
 
-            flashcards.append({
-                "question": f"What are {subject}?",
-                "answer": sentence,
-                "status": "Not Known"
-            })
+        subject = words[0]
+
+        flashcards.append(
+            build_flashcard(
+                f"What is {subject}?",
+                sentence + "."
+            )
+        )
+
+        if len(flashcards) >= max_cards:
+            break
 
     return flashcards
 
 
-# Generate the full flashcard deck.
 def generate_flashcards(notes):
     cleaned_notes = clean_text(notes)
 
@@ -75,56 +59,42 @@ def generate_flashcards(notes):
 
     nlp = load_nlp_pipeline()
 
-    paragraphs = split_paragraphs(
-        cleaned_notes
-    )
+    paragraphs = split_paragraphs(cleaned_notes)
 
     flashcards = []
 
     for paragraph in paragraphs:
-        paragraph_cards = generate_from_paragraph(
-            nlp,
-            paragraph
+        flashcards.extend(
+            generate_from_paragraph(
+                nlp,
+                paragraph
+            )
         )
-
-        flashcards.extend(paragraph_cards)
 
     unique_cards = []
     seen_questions = set()
 
     for card in flashcards:
-        question_key = (
-            card["question"]
-            .strip()
-            .lower()
-        )
+        key = card["question"].lower().strip()
 
-        if question_key in seen_questions:
+        if key in seen_questions:
             continue
 
-        seen_questions.add(question_key)
+        seen_questions.add(key)
         unique_cards.append(card)
 
     return unique_cards[:20]
 
 
-# Read stdin from Node.js and return JSON.
 def main():
     try:
         raw_input = sys.stdin.read().strip()
 
-        payload = json.loads(
-            raw_input or "{}"
-        )
+        payload = json.loads(raw_input or "{}")
 
-        notes = payload.get(
-            "notes",
-            ""
-        )
+        notes = payload.get("notes", "")
 
-        flashcards = generate_flashcards(
-            notes
-        )
+        flashcards = generate_flashcards(notes)
 
         output = {
             "flashcards": flashcards,
